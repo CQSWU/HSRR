@@ -28,78 +28,49 @@ def test_training_example_uses_current_candidate_and_wait_only_controller():
     expected = ARPEWeights.from_mapping(manifest, root).as_dict()
     assert flat.candidate_policy == expected
     assert flat.full_config["candidate_policy"] == expected
-    assert flat.population_curriculum == {"populations": [50, 100, 200], "cycles": 10}
+    assert config["environment"]["grid_config"]["num_agents"] == 200
+    assert flat.full_config["environment"]["grid_config"]["num_agents"] == 200
+    assert flat.full_config["environment"]["training_num_agents_by_worker"] is None
+    assert "population_curriculum" not in config
+    assert "population_curriculum" not in flat
     assert "population_curriculum" not in flat.full_config
 
 
-def test_population_stages_use_equal_agent_step_budgets():
-    stages = train_switcher.population_stages(
-        {"populations": [50, 100, 200], "cycles": 10}, 1_000_000_000
-    )
-    assert [n for n, _ in stages] == [50, 100, 200] * 10
-    targets = [0] + [target for _, target in stages]
-    budgets = [b - a for a, b in zip(targets, targets[1:])]
-    assert max(budgets) - min(budgets) == 1
-    assert targets[-1] == 1_000_000_000
+def test_entrypoint_runs_one_fixed_population_job(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    seen = []
+    monkeypatch.setattr(train_switcher, "register_switcher_components", lambda: None)
+    monkeypatch.setattr(train_switcher, "run_rl", lambda cfg: seen.append(cfg) or 7)
+    assert train_switcher.main(
+        ["--config_path", str(root / "configs/train_switcher.yaml"),
+         "--train_dir", str(tmp_path)]
+    ) == 7
+    assert len(seen) == 1
+    assert seen[0].train_for_env_steps == 1_000_000_000
+    assert seen[0].full_config["environment"]["grid_config"]["num_agents"] == 200
+    assert "population_curriculum" not in seen[0]
 
 
-@pytest.mark.parametrize("populations,cycles", [([], 1), ([0], 1), ([50], 0)])
-def test_invalid_curriculum_is_rejected(populations, cycles):
-    with pytest.raises(ValueError):
-        train_switcher.population_stages(
-            {"populations": populations, "cycles": cycles}, 100
+def test_removed_population_cli_option_is_rejected():
+    with pytest.raises(SystemExit) as error:
+        train_switcher.main(["--config_path", "unused.yaml", "--training_population", "50"])
+    assert error.value.code == 2
+
+
+def test_worker_index_does_not_change_switcher_population(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    config = yaml.safe_load((root / "configs/train_switcher.yaml").read_text())
+    flat = train_switcher.prepare_switcher_config(config)
+    flat.full_config["environment"]["training_num_agents_by_worker"] = [50, 100, 200]
+    monkeypatch.setattr(train_switcher, "SwitcherEnv", lambda **kwargs: kwargs)
+    for worker_index in range(flat.num_workers):
+        result = train_switcher.create_switcher_env(
+            train_switcher.ENV_NAME, cfg=flat, env_config={"worker_index": worker_index}
         )
+        assert result["grid_config"].num_agents == 200
 
 
-def _curriculum_config(tmp_path):
-    return SimpleNamespace(
-        train_dir=str(tmp_path),
-        experiment="curriculum",
-        train_for_env_steps=300,
-        population_curriculum={"populations": [50, 100, 200], "cycles": 1},
-    )
-
-
-def test_curriculum_resume_skips_finished_stages_and_keeps_one_run(
-    tmp_path, monkeypatch
-):
-    cfg = _curriculum_config(tmp_path)
-    checkpoints = tmp_path / cfg.experiment / "checkpoint_p0"
-    checkpoints.mkdir(parents=True)
-    (checkpoints / "checkpoint_000001_000000120.pth").touch()
-    calls = []
-
-    def launch(command):
-        calls.append(command)
-        target = int(command[command.index("--train_for_env_steps") + 1])
-        (checkpoints / f"checkpoint_000002_{target:09d}.pth").touch()
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(train_switcher.subprocess, "run", launch)
-    assert train_switcher.run_curriculum(tmp_path / "recipe.yaml", cfg) == 0
-    assert [cmd[cmd.index("--training_population") + 1] for cmd in calls] == [
-        "100",
-        "200",
-    ]
-    assert all(cmd[cmd.index("--run_name") + 1] == cfg.experiment for cmd in calls)
-    assert train_switcher.run_curriculum(tmp_path / "recipe.yaml", cfg) == 0
-    assert len(calls) == 2
-
-
-def test_curriculum_stops_on_failure_or_incomplete_checkpoint(tmp_path, monkeypatch):
-    cfg = _curriculum_config(tmp_path)
-    monkeypatch.setattr(
-        train_switcher.subprocess, "run", lambda _: SimpleNamespace(returncode=7)
-    )
-    assert train_switcher.run_curriculum(tmp_path / "recipe.yaml", cfg) == 7
-    monkeypatch.setattr(
-        train_switcher.subprocess, "run", lambda _: SimpleNamespace(returncode=0)
-    )
-    with pytest.raises(RuntimeError, match="before the stage target"):
-        train_switcher.run_curriculum(tmp_path / "recipe.yaml", cfg)
-
-
-def test_stage_updates_population_on_resume_without_touching_checkpoint(
+def test_resume_uses_fixed_recipe_without_touching_checkpoint(
     tmp_path, monkeypatch
 ):
     root = Path(__file__).resolve().parents[1]
@@ -107,15 +78,13 @@ def test_stage_updates_population_on_resume_without_touching_checkpoint(
         "--config_path",
         str(root / "configs/train_switcher.yaml"),
         "--run_name",
-        "curriculum",
+        "fixed-population",
         "--train_dir",
         str(tmp_path),
         "--train_for_env_steps",
         "200",
-        "--training_population",
-        "100",
     ]
-    saved_path = tmp_path / "curriculum" / "config.json"
+    saved_path = tmp_path / "fixed-population" / "config.json"
     saved_path.parent.mkdir()
     saved_path.write_text(
         json.dumps(
@@ -134,10 +103,11 @@ def test_stage_updates_population_on_resume_without_touching_checkpoint(
     assert train_switcher.main(args) == 0
     cfg = seen[0]
     saved = json.loads(saved_path.read_text())
-    assert saved["full_config"]["environment"]["grid_config"]["num_agents"] == 100
+    assert len(seen) == 1
+    assert saved["full_config"]["environment"]["grid_config"]["num_agents"] == 200
     assert (
         saved["full_config"]["environment"]["training_num_agents_by_worker"]
-        == [100] * cfg.num_workers
+        is None
     )
     assert saved["train_for_env_steps"] == 200
     assert saved["restart_behavior"] == "resume"
@@ -150,7 +120,7 @@ def test_validate_only_has_no_training_or_resume_writes(tmp_path, monkeypatch, c
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(train_switcher, "register_switcher_components", lambda: None)
     monkeypatch.setattr(
-        train_switcher, "run_curriculum", lambda *args: pytest.fail("started training")
+        train_switcher, "run_rl", lambda *args: pytest.fail("started training")
     )
     monkeypatch.setattr(
         train_arpe,
@@ -170,8 +140,9 @@ def test_validate_only_has_no_training_or_resume_writes(tmp_path, monkeypatch, c
         == 0
     )
     report = json.loads(capsys.readouterr().out)
-    assert len(report["population_stages"]) == 30
-    assert [n for n, _ in report["population_stages"][:3]] == [50, 100, 200]
+    assert report["num_agents"] == 200
+    assert report["target_frames"] == 1_000_000_000
+    assert "population_stages" not in report
     assert not list(tmp_path.iterdir())
 
 
@@ -236,7 +207,6 @@ def _configuration(environment_name, collision):
             "environment": {
                 "name": environment_name,
                 "switcher_caar_device": "cpu",
-                "switcher_team_reward_coefficient": 1.0,
                 "grid_config": {
                     "map": ".......\n.......\n.......\n.......\n.......\n.......\n.......",
                     "num_agents": 2,
@@ -249,6 +219,32 @@ def _configuration(environment_name, collision):
             },
         }
     )
+
+
+@pytest.mark.parametrize("own_reward", [0.9999, -0.0001, -0.0003])
+def test_switcher_reward_is_independent_of_other_agents(own_reward):
+    env = object.__new__(SwitcherEnv)
+    env.num_agents = 2
+    prepared = SimpleNamespace(
+        switch_allowed_mask=np.array([True, True]),
+        switcher_state={"obs": np.zeros((2, 1), dtype=np.float32)},
+    )
+    env._prepared = prepared
+    env.controller = SimpleNamespace(
+        resolve_actions=lambda choices: choices,
+        after_step=lambda done: None,
+        prepare_actions=lambda *args: prepared,
+    )
+    own_rewards = []
+    for other_reward in (-1.0, 0.0, 1.0):
+        raw = [own_reward, other_reward]
+        env.base_env = SimpleNamespace(
+            step=lambda actions: ([{}, {}], raw, [False, False], [False, False], [{}, {}])
+        )
+        _, rewards, _, _, _ = env.step([0, 1])
+        np.testing.assert_array_equal(rewards, np.asarray(raw, dtype=np.float32))
+        own_rewards.append(rewards[0])
+    assert own_rewards == [float(np.float32(own_reward))] * 3
 
 
 @pytest.mark.parametrize("collision", ["block_both", "soft"])
@@ -304,7 +300,7 @@ def test_dedicated_registry_constructs_real_env_and_preserves_runtime(
                 [index % 2, (index + 1) % 2]
             )
             raw = rewards_seen[-1]
-            np.testing.assert_allclose(rewards, raw + raw.mean(), rtol=0, atol=0)
+            np.testing.assert_allclose(rewards, raw, rtol=0, atol=0)
             assert (
                 len(observations)
                 == len(rewards)

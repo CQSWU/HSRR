@@ -12,16 +12,16 @@ from agents.common import AlgoBase
 from planning.branch import AORePlanBranch
 
 
-class HRSSConfig(AlgoBase, extra=Extra.forbid):
-    name: Literal["HRSS"] = "HRSS"
+class HSRRConfig(AlgoBase, extra=Extra.forbid):
+    name: Literal["HSRR"] = "HSRR"
     switcher: SwitcherConfig = SwitcherConfig()
     max_planning_steps: int = Field(10_000, gt=0)
 
 
-class HRSS:
+class HSRR:
     def __init__(
         self,
-        cfg: HRSSConfig,
+        cfg: HSRRConfig,
         *,
         candidate: ARPEWeights | None = None,
         candidate_factory: Callable = ARPE,
@@ -76,6 +76,6 @@ class HRSS:
 
 
 __all__ = [
-    "HRSS",
-    "HRSSConfig",
+    "HSRR",
+    "HSRRConfig",
 ]

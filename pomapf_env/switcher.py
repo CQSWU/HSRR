@@ -30,7 +30,6 @@ class SwitcherEnv(gym.Env):
         candidate_artifact: ARPEWeights,
         candidate_device: str = "cuda",
         max_planning_steps: int = 10_000,
-        team_reward_coefficient: float = 1.0,
         candidate_factory=ARPE,
         planner_factory=AORePlanBranch,
         base_env_factory=make_pomapf,
@@ -43,9 +42,6 @@ class SwitcherEnv(gym.Env):
                 f"system; received {collision_system!r}, supported "
                 f"{SUPPORTED_COLLISION_SYSTEMS}."
             )
-        if not np.isfinite(team_reward_coefficient):
-            raise ValueError("team_reward_coefficient must be finite.")
-
         self.base_env = base_env_factory(
             grid_config=deepcopy(grid_config), with_animations=False
         )
@@ -60,7 +56,6 @@ class SwitcherEnv(gym.Env):
         self.controller = self.controller_class(candidate, planner)
         self.candidate = candidate
         self.candidate_artifact = candidate_artifact
-        self.team_reward_coefficient = float(team_reward_coefficient)
         self.observation_space = switcher_observation_space()
         self.action_space = gym.spaces.Discrete(2)
         self.num_agents = int(grid_config.num_agents)
@@ -134,8 +129,6 @@ class SwitcherEnv(gym.Env):
         self.controller.after_step(done)
 
         rewards_array = np.asarray(rewards, dtype=np.float32)
-        team_mean = float(rewards_array.mean())
-        training_rewards = rewards_array + (self.team_reward_coefficient * team_mean)
 
         episode_finished = bool(done.size and np.all(done))
         if episode_finished:
@@ -151,7 +144,7 @@ class SwitcherEnv(gym.Env):
 
         return (
             next_features,
-            training_rewards.tolist(),
+            rewards_array.tolist(),
             list(terminated),
             list(truncated),
             infos,

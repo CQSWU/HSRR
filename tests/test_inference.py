@@ -34,25 +34,22 @@ def test_inference_gate_is_strict_and_uses_raw_correction():
     assert torch.equal(raw.grad[2:], torch.ones_like(raw[2:]))
 
 
-def test_native_training_uses_only_base_and_all_action_correction():
+def test_native_training_and_inference_share_entropy_gate():
     logits = torch.tensor([[100.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]])
     raw = torch.tensor([[1.0, -1.0, 2.0, -2.0, 0.0]]).repeat(2, 1)
     model = SimpleNamespace(
-        training=False,
+        training=True,
         _base_entropy=ARPEActorCritic._base_entropy,
     )
     apply = ARPEActorCritic._apply_configured_correction_rule
     native = apply(model, logits, raw)
-    torch.testing.assert_close(
-        native, logits + raw, rtol=0, atol=0
-    )
+    assert torch.equal(native[0], logits[0])
+    assert torch.equal(native[1], logits[1] + raw[1])
     model.inference_correction = InferenceCorrection()
     final = apply(model, logits, raw)
-    assert torch.equal(final[0], logits[0])
-    assert torch.equal(final[1], logits[1] + raw[1])
-    model.training = True
-    with pytest.raises(RuntimeError, match="training"):
-        apply(model, logits, raw)
+    torch.testing.assert_close(final, native, rtol=0, atol=0)
+    model.training = False
+    torch.testing.assert_close(apply(model, logits, raw), native, rtol=0, atol=0)
 
 
 def _observations(position=(0, 0), target=(0, 5)):
@@ -121,15 +118,15 @@ def test_wait_only_controller_leaves_reverse_actions_to_switcher(
 
 def test_training_and_deployment_share_wait_only_controller():
     import inspect
-    from agents.hrss import HRSS, HRSSConfig
+    from agents.hsrr import HSRR, HSRRConfig
     from pomapf_env.switcher import SwitcherEnv
 
     assert SwitcherEnv.controller_class is SwitcherController
     assert (
-        inspect.signature(HRSS).parameters["controller_factory"].default
+        inspect.signature(HSRR).parameters["controller_factory"].default
         is SwitcherController
     )
-    assert "final_reverse_guard_enabled" not in HRSSConfig.__fields__
+    assert "final_reverse_guard_enabled" not in HSRRConfig.__fields__
 
 
 def test_final_manifest_only_selects_weights():
@@ -149,13 +146,13 @@ def test_final_manifest_only_selects_weights():
 def test_final_weight_loading_and_small_cpu_forward_when_available():
     mapping = json.loads((ROOT / "configs/arpe.json").read_text())
     artifact = ARPEWeights.from_mapping(mapping, ROOT)
-    switcher_dir = ROOT / "weights/HRSS-Switcher-Final-1B"
+    switcher_dir = ROOT / "weights/HSRR-Switcher-Final-1B"
     if (
         not artifact.checkpoint_path.is_file()
         or not (switcher_dir / "config.json").is_file()
     ):
         pytest.skip("Final model weights are distributed separately")
-    from agents.hrss import HRSS, HRSSConfig
+    from agents.hsrr import HSRR, HSRRConfig
     from agents.switcher import SwitcherConfig
     from agents.controller import build_switcher_state
     from sample_factory.algo.utils.tensor_dict import TensorDict
@@ -163,8 +160,8 @@ def test_final_weight_loading_and_small_cpu_forward_when_available():
 
     source_config = artifact.weights_path / "config.json"
     source_bytes = source_config.read_bytes()
-    policy = HRSS(
-        HRSSConfig(
+    policy = HSRR(
+        HSRRConfig(
             device="cpu",
             switcher=SwitcherConfig(path_to_weights=str(switcher_dir), device="cpu"),
         ),

@@ -222,7 +222,7 @@ class Environment(BaseModel, extra=Extra.forbid):
     name: Literal[
         "POMAPF-v0",
         "POMAPF-EPOM-ST-v0",
-        "POMAPF-HRSS-v0",
+        "POMAPF-HSRR-v0",
     ] = "POMAPF-v0"
 
     tau_rho: float = Field(0.1, gt=0.0, le=1.0)
@@ -234,8 +234,6 @@ class Environment(BaseModel, extra=Extra.forbid):
     switcher_caar_device: str = "auto"
 
     switcher_max_planning_steps: int = Field(10_000, gt=0)
-
-    switcher_team_reward_coefficient: float = 1.0
 
     def for_worker(self, env_config=None):
         if self.training_num_agents_by_worker is None:

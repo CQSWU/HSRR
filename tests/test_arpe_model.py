@@ -14,7 +14,7 @@ from torch import nn
 from torch.nn.utils.rnn import PackedSequence, pack_padded_sequence
 
 from learning.config import Experiment
-from learning.arpe_actor_critic import ARPEActorCritic
+from learning.arpe_actor_critic import ARPEActorCritic, InferenceCorrection
 from train_arpe import register_custom_components, validate_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +66,7 @@ def test_config_locks_the_selected_arpe_contract():
     assert settings.hidden_size == 512
     assert settings.train_for_env_steps == 1_000_000_000
     assert settings.epom_base_weights_path == "weights/EPOM-L"
+    assert experiment.async_ppo.exploration_loss_coeff == 0.0
     assert environment.tau_radius == 5
     assert environment.grid_memory_obs_radius == 7
     assert environment.grid_config.map_name == "maps/train.yaml"
@@ -129,7 +130,7 @@ def test_residual_keeps_raw_magnitude_and_mean(correction_model):
     assert torch.equal(raw.grad, torch.ones_like(raw))
 
 
-def test_training_keeps_actor_gradient_for_all_rows_and_actions(correction_model):
+def test_training_masks_low_entropy_rows_and_keeps_high_entropy_gradients(correction_model):
     base = torch.tensor(
         [[0.0, 0.4, 0.3, 0.2, 0.1], [20.0, 0.4, 0.3, 0.2, 0.1]],
         requires_grad=True,
@@ -141,13 +142,14 @@ def test_training_keeps_actor_gradient_for_all_rows_and_actions(correction_model
         base, raw
     )
     reference_raw = raw.detach().clone().requires_grad_()
-    expected = base.detach() + reference_raw
+    expected = base.detach() + torch.tensor([[1.0], [0.0]]) * reference_raw
     torch.testing.assert_close(final, expected, rtol=0, atol=0)
     targets = torch.tensor([1, 2])
     F.cross_entropy(expected, targets, reduction="sum").backward()
     F.cross_entropy(final, targets, reduction="sum").backward()
     torch.testing.assert_close(raw.grad, reference_raw.grad, rtol=0, atol=0)
-    assert torch.count_nonzero(raw.grad).item() == 10
+    assert torch.count_nonzero(raw.grad[0]).item() == 5
+    assert torch.count_nonzero(raw.grad[1]).item() == 0
     assert base.grad is None
 
 
@@ -159,14 +161,68 @@ def test_zero_output_preserves_base_logits_at_all_entropies(correction_model):
     torch.testing.assert_close(final, base, rtol=0, atol=0)
 
 
-def test_training_formula_is_base_plus_raw_correction(correction_model):
+def test_training_formula_is_entropy_gated_base_plus_raw_correction(correction_model):
     base = torch.tensor([[0.0, 0.4, 0.3, 0.2, 0.1], [20.0, 0.4, 0.3, 0.2, 0.1]])
     raw = torch.tensor([[2.0, -1.0, 0.0, 4.0, -3.0], [1.0, 2.0, 3.0, 4.0, 5.0]])
     final = correction_model._apply_configured_correction_rule(
         base, raw
     )
-    expected = base + raw
+    expected = base + torch.tensor([[1.0], [0.0]]) * raw
     torch.testing.assert_close(final, expected, rtol=0, atol=0)
+
+
+def test_policy_entropy_gate_is_strictly_above_point_zero_one():
+    entropy = torch.tensor([0.0, 0.009999, 0.01, 0.010001], dtype=torch.float64)
+    assert torch.equal(
+        InferenceCorrection.gate(entropy),
+        torch.tensor([[False], [False], [False], [True]]),
+    )
+
+
+def test_correction_gate_uses_base_entropy_not_corrected_policy(correction_model):
+    base = torch.tensor([[0.0] * 5, [20.0, 0.0, 0.0, 0.0, 0.0]])
+    raw = torch.tensor([[20.0, 0.0, 0.0, 0.0, 0.0], [-20.0, 0.0, 0.0, 0.0, 0.0]])
+    final = correction_model._apply_configured_correction_rule(base, raw)
+    torch.testing.assert_close(final[0], base[0] + raw[0], rtol=0, atol=0)
+    torch.testing.assert_close(final[1], base[1], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("training", [False, True])
+def test_training_and_inference_share_the_same_correction_rule(correction_model, training):
+    base = torch.tensor([[0.0, 0.4, 0.3, 0.2, 0.1], [20.0, 0.4, 0.3, 0.2, 0.1]])
+    raw = torch.tensor([[2.0, -1.0, 0.0, 4.0, -3.0], [1.0, 2.0, 3.0, 4.0, 5.0]])
+    correction_model.train(training)
+    expected = correction_model._apply_configured_correction_rule(base, raw)
+    correction_model.inference_correction = InferenceCorrection()
+    actual = correction_model._apply_configured_correction_rule(base, raw)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(actual[0], base[0] + raw[0], rtol=0, atol=0)
+    torch.testing.assert_close(actual[1], base[1], rtol=0, atol=0)
+
+
+def test_low_entropy_actor_gate_does_not_mask_critic_learning(correction_model):
+    correction_model.critic_fusion_head = nn.Sequential(nn.Linear(549, 256), nn.ReLU())
+    correction_model.trace_value_head = nn.Linear(256, 1)
+    with torch.no_grad():
+        correction_model.critic_fusion_head[0].weight.fill_(0.01)
+        correction_model.critic_fusion_head[0].bias.fill_(0.1)
+        correction_model.trace_value_head.weight.fill_(0.01)
+        correction_model.trace_value_head.bias.zero_()
+    base = torch.tensor([[20.0, 0.0, 0.0, 0.0, 0.0]], requires_grad=True)
+    raw = torch.ones(1, 5, requires_grad=True)
+    hidden = torch.zeros(1, 512, requires_grad=True)
+    critic_trace = torch.ones(1, 32, requires_grad=True)
+    final = correction_model._apply_configured_correction_rule(base, raw)
+    values = correction_model._critic_values(hidden, critic_trace, base)
+    loss = F.cross_entropy(final, torch.tensor([1])) + values.square().mean()
+    loss.backward()
+    assert torch.equal(final, base)
+    assert torch.equal(raw.grad, torch.zeros_like(raw))
+    assert critic_trace.grad is not None and critic_trace.grad.norm().item() > 0
+    assert correction_model.critic_fusion_head[0].weight.grad.norm().item() > 0
+    assert correction_model.trace_value_head.weight.grad.norm().item() > 0
+    assert base.grad is None
+    assert hidden.grad is None
 
 
 def test_actor_and_critic_have_independent_trace_gradients_and_frozen_base(full_model):

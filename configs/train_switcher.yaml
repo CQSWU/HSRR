@@ -1,7 +1,4 @@
-name: HRSS-Switcher-S0
-population_curriculum:
-  populations: [50, 100, 200]
-  cycles: 10
+name: HSRR-Switcher-S0
 candidate_policy:
   weights_path: weights/ARPE-Final-1B
   checkpoint_path: weights/ARPE-Final-1B/checkpoint_p0/checkpoint_000244175_1000140800.pth
@@ -45,14 +42,13 @@ async_ppo:
   exploration_loss_coeff: 0.005
   value_loss_coeff: 0.5
 environment:
-  name: POMAPF-HRSS-v0
+  name: POMAPF-HSRR-v0
   switcher_caar_device: auto
   switcher_max_planning_steps: 10000
-  switcher_team_reward_coefficient: 1.0
   grid_config:
     on_target: restart
     collision_system: block_both
     map_name: maps/train.yaml
     max_episode_steps: 512
     obs_radius: 5
-    num_agents: 50
+    num_agents: 200

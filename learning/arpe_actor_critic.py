@@ -13,9 +13,11 @@ ENTROPY_EPS = 1e-10
 
 
 class InferenceCorrection:
+    """Shared training/inference correction; keep the public loader name stable."""
+
     @staticmethod
     def gate(entropy):
-        # Leave very confident base-policy decisions unchanged at inference.
+        # Leave very confident base-policy decisions unchanged in both modes.
         return (entropy > 0.01).unsqueeze(-1)
 
     def apply(self, base_logits, residual, entropy):
@@ -281,19 +283,14 @@ class ARPEActorCritic(_FrozenEPOMActorCritic):
         raw_correction,
     ):
         base_logits = base_logits.detach()
-        inference = getattr(self, "inference_correction", None)
-        if inference is not None:
-            if self.training:
-                raise RuntimeError(
-                    "Inference correction must not be used for training."
-                )
-            return inference.apply(
-                base_logits,
-                raw_correction,
-                self._base_entropy(base_logits),
-            )
-        # Training adds the raw correction; inference uses the gate above.
-        return base_logits + raw_correction
+        correction = getattr(self, "inference_correction", None)
+        if correction is None:
+            correction = InferenceCorrection()
+        return correction.apply(
+            base_logits,
+            raw_correction,
+            self._base_entropy(base_logits),
+        )
 
     def forward_tail(self, core_output, values_only: bool, sample_actions: bool):
         if isinstance(core_output, PackedSequence):

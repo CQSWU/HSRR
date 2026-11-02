@@ -29,7 +29,7 @@ DEFAULT_MAPS = {
     "wc3": "wc3-Battleground",
 }
 
-SUPPORTED_ALGORITHMS = ("AORePlan", "ARPE", "HRSS")
+SUPPORTED_ALGORITHMS = ("AORePlan", "ARPE", "HSRR")
 DEFAULT_ALGORITHMS = ("AORePlan",)
 ALGORITHM_ALIASES = {name.lower(): name for name in SUPPORTED_ALGORITHMS}
 
@@ -92,19 +92,19 @@ def build_algorithm(
 
         return AORePlan(AORePlanConfig(seed=seed))
 
-    if algo_name == "HRSS":
-        from agents.hrss import HRSS, HRSSConfig
+    if algo_name == "HSRR":
+        from agents.hsrr import HSRR, HSRRConfig
         from agents.switcher import SwitcherConfig
 
         artifact = _load_arpe_candidate_artifact(main_dir, arpe_candidate_manifest)
 
-        return HRSS(
-            HRSSConfig(
+        return HSRR(
+            HSRRConfig(
                 switcher=SwitcherConfig(
                     path_to_weights=str(
                         _project_path(
                             main_dir,
-                            switcher_weights_path or "weights/HRSS-Switcher-Final-1B",
+                            switcher_weights_path or "weights/HSRR-Switcher-Final-1B",
                         )
                     ),
                     device="auto",

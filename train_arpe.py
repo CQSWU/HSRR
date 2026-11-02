@@ -93,7 +93,7 @@ patch_switcher_learner_losses()
 def create_pogema_env(full_env_name, cfg=None, env_config=None, render_mode=None):
     del render_mode
 
-    if full_env_name == "POMAPF-HRSS-v0":
+    if full_env_name == "POMAPF-HSRR-v0":
         raise RuntimeError(
             "Switcher training uses its own ARPE path configuration. "
             "Use train_switcher.py for Switcher training, not generic train_arpe.py."
@@ -175,7 +175,7 @@ def register_custom_components():
     for name in (
         "POMAPF-v0",
         "POMAPF-EPOM-ST-v0",
-        "POMAPF-HRSS-v0",
+        "POMAPF-HSRR-v0",
     ):
         global_env_registry()[name] = create_pogema_env
 

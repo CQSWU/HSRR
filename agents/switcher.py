@@ -28,7 +28,7 @@ from train_arpe import register_custom_components, validate_config
 
 class SwitcherConfig(AlgoBase, extra=Extra.forbid):
     name: Literal["Switcher"] = "Switcher"
-    path_to_weights: str = "weights/HRSS-Switcher-Final-1B"
+    path_to_weights: str = "weights/HSRR-Switcher-Final-1B"
 
 
 class Switcher:

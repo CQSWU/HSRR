@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-_PATCH_ATTRIBUTE = "_hrss_switcher_actor_mask_patch"
+_PATCH_ATTRIBUTE = "_hsrr_switcher_actor_mask_patch"
 _STD_MEAN_PATCH_LOCK = RLock()
 
 
@@ -176,7 +176,7 @@ def _build_switcher_calculate_losses(original: Callable) -> Callable:
         )
 
     setattr(patched, _PATCH_ATTRIBUTE, True)
-    patched._hrss_original_calculate_losses = original
+    patched._hsrr_original_calculate_losses = original
     return patched
 
 

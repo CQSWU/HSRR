@@ -1,4 +1,4 @@
-name: ARPE-Always-1B-Example-S0
+name: ARPE-EntropyGated-1B-S0
 global_settings:
   train_dir: weights/arpe_training_example
   device: gpu
