@@ -24,7 +24,6 @@ def _recipe():
         ("trace_context_learned_gate", "all"),
         ("trace_encoder_input", "zero"),
         ("trace_rule_scale", 1.0),
-        ("trace_gate_threshold", 0.46371241),
     ],
 )
 def test_new_recipes_reject_retired_model_settings(field, value):
@@ -58,7 +57,6 @@ def test_saved_recipe_uses_current_fields_without_modifying_its_input():
         "trace_context_learned_gate": "always",
         "trace_encoder_input": "raw",
         "trace_rule_scale": 1.0,
-        "trace_gate_threshold": 0.46371241,
     }
     environment_fields = {
         "trace_context_team_reward_coefficient": 0.0,

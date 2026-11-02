@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Callable, Literal
 
 import numpy as np
@@ -32,11 +34,11 @@ class HSRR:
         switcher_cfg = cfg.switcher.copy(deep=True, update={"seed": cfg.seed})
         self.switcher = switcher_factory(switcher_cfg)
         if candidate is None:
-            candidate = self.switcher.candidate_artifact
-        if candidate is None:
-            raise RuntimeError(
-                "Switcher checkpoint does not contain ARPE candidate paths."
+            project_root = Path(__file__).resolve().parents[1]
+            declaration = json.loads(
+                (project_root / "configs" / "arpe.json").read_text(encoding="utf-8")
             )
+            candidate = ARPEWeights.from_mapping(declaration, project_root)
         self.candidate = candidate_factory(
             candidate,
             seed=int(cfg.seed or 0),

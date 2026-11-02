@@ -1,14 +1,18 @@
+import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
+import gymnasium as gym
 import numpy as np
 import pytest
 import torch
 
 from agents import switcher as switcher_module
+from agents.arpe import ARPEWeights
 from agents.hsrr import HSRR, HSRRConfig
 from agents.switcher import Switcher, SwitcherConfig
-from agents.controller import SWITCHER_FIELD_SHAPES
+from agents.controller import SWITCHER_FIELD_SHAPES, switcher_observation_space
 
 
 class _FrozenPolicy:
@@ -31,19 +35,8 @@ class _FakeCandidate:
 
 
 class _FakeSwitcher:
-    candidate_artifact = SimpleNamespace(
-        project_root=None,
-    )
-
     def __init__(self, _cfg):
-        self.candidate_artifact = SimpleNamespace(
-            project_root=Path(__file__).resolve().parents[1],
-        )
-
-
-class _MissingCandidateSwitcher(_FakeSwitcher):
-    def __init__(self, _cfg):
-        self.candidate_artifact = None
+        pass
 
 
 class _FakePlanner:
@@ -60,7 +53,7 @@ def _config():
     )
 
 
-def test_hsrr_loads_the_arpe_paths_saved_with_switcher():
+def test_hsrr_defaults_to_current_arpe_manifest_without_switcher_metadata():
     algorithm = HSRR(
         _config(),
         candidate_factory=_FakeCandidate,
@@ -70,25 +63,19 @@ def test_hsrr_loads_the_arpe_paths_saved_with_switcher():
 
     assert algorithm.candidate.seed == 0
     assert algorithm.candidate.device == torch.device("cpu")
+    root = Path(__file__).resolve().parents[1]
+    mapping = json.loads((root / "configs/arpe.json").read_text())
+    assert algorithm.candidate.artifact == ARPEWeights.from_mapping(mapping, root)
 
 
-def test_hsrr_rejects_a_switcher_without_candidate_paths():
-    with pytest.raises(RuntimeError, match="does not contain"):
-        HSRR(
-            _config(),
-            candidate_factory=_FakeCandidate,
-            switcher_factory=_MissingCandidateSwitcher,
-            planner_factory=_FakePlanner,
-        )
-
-
-def test_hsrr_uses_explicit_arpe_paths_without_a_configuration_roundtrip():
+def test_hsrr_uses_explicit_arpe_paths_without_a_configuration_roundtrip(monkeypatch):
+    monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: pytest.fail("read manifest"))
     artifact = object()
     algorithm = HSRR(
         _config(),
         candidate=artifact,
         candidate_factory=_FakeCandidate,
-        switcher_factory=_MissingCandidateSwitcher,
+        switcher_factory=_FakeSwitcher,
         planner_factory=_FakePlanner,
     )
     assert algorithm.candidate.artifact is artifact
@@ -107,6 +94,65 @@ def test_switcher_loads_latest_checkpoint_before_best(tmp_path):
     latest = tmp_path / "checkpoint_000002_000000200.pth"
     latest.touch()
     assert Switcher._resolve_checkpoint(tmp_path) == latest.resolve()
+
+
+def _assert_config_free_switcher(weights_dir, monkeypatch):
+    assert not (weights_dir / "config.json").exists()
+    monkeypatch.setattr(
+        Path, "read_text",
+        lambda *args, **kwargs: pytest.fail("Switcher read a training configuration"),
+    )
+    policy = Switcher(SwitcherConfig(path_to_weights=str(weights_dir), device="cpu", seed=42))
+    checkpoint = torch.load(policy.checkpoint_path, map_location="cpu", weights_only=False)
+    loaded = policy.ppo.state_dict()
+    assert loaded.keys() == checkpoint["model"].keys()
+    for key, value in loaded.items():
+        torch.testing.assert_close(value, checkpoint["model"][key], rtol=0, atol=0)
+    assert policy.ppo.encoder.get_out_size() == 128
+    assert policy.ppo.cfg.use_rnn is False
+    assert policy.rnn_state_size == 1  # Sample Factory's feed-forward dummy state.
+    assert not policy.ppo.training
+    assert all(not parameter.requires_grad for parameter in policy.ppo.parameters())
+    state = {
+        key: np.zeros((16, *shape), dtype=np.float32)
+        for key, shape in SWITCHER_FIELD_SHAPES.items()
+    }
+    state["caar_action"][:, 1] = 1.0
+    state["aoreplan_action"][:, 4] = 1.0
+    actions = policy.choose(state)
+    assert actions.shape == (16,)
+    assert np.all(np.isin(actions, (0, 1)))
+    policy.after_reset()
+    np.testing.assert_array_equal(policy.choose(state), actions)
+
+
+def test_switcher_loads_full_model_without_config_or_training_recipe(tmp_path, monkeypatch):
+    switcher_module.register_custom_components()
+    _, cfg = switcher_module.validate_config({
+        "name": "test-switcher",
+        "experiment_settings": {
+            "encoder_custom": "switcher", "hidden_size": 128, "normalize_input": False,
+        },
+        "async_ppo": {"use_rnn": False},
+    })
+    model = switcher_module.create_actor_critic(
+        cfg, switcher_observation_space(), gym.spaces.Discrete(2)
+    )
+    checkpoint_dir = tmp_path / "checkpoint_p0"
+    checkpoint_dir.mkdir()
+    torch.save({"model": model.state_dict()}, checkpoint_dir / "checkpoint_000001_000000100.pth")
+    _assert_config_free_switcher(tmp_path, monkeypatch)
+
+
+def test_published_switcher_checkpoint_loads_without_config_when_available(tmp_path, monkeypatch):
+    source = Path(__file__).resolve().parents[1] / SwitcherConfig().path_to_weights / "checkpoint_p0"
+    if not list(source.glob("*.pth")):
+        pytest.skip("Published Switcher weights are distributed separately")
+    checkpoint = Switcher._resolve_checkpoint(source)
+    checkpoint_dir = tmp_path / "checkpoint_p0"
+    checkpoint_dir.mkdir()
+    shutil.copyfile(checkpoint, checkpoint_dir / checkpoint.name)
+    _assert_config_free_switcher(tmp_path, monkeypatch)
 
 
 def test_switcher_uses_sampled_actor_actions_and_preserves_reset_seed(monkeypatch):

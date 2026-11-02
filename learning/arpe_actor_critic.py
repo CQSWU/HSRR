@@ -13,7 +13,7 @@ ENTROPY_EPS = 1e-10
 
 
 class InferenceCorrection:
-    """Shared training/inference correction; keep the public loader name stable."""
+    """Entropy-gated correction shared by training and inference."""
 
     @staticmethod
     def gate(entropy):
@@ -193,20 +193,6 @@ class ARPEActorCritic(_FrozenEPOMActorCritic):
         nn.init.zeros_(self.trace_multiplier_head[-1].bias)
 
         self._load_and_freeze_base(settings)
-        self.register_buffer(
-            "fixed_entropy_threshold",
-            torch.tensor(0.46371241, dtype=torch.float64),
-        )
-        self.register_buffer(
-            "paper_entropy_gate_version",
-            torch.tensor(0, dtype=torch.int64),
-        )
-        self.register_buffer(
-            "independent_critic_version", torch.tensor(1, dtype=torch.int64)
-        )
-        self.register_buffer(
-            "allaction_residual_version", torch.tensor(2, dtype=torch.int64)
-        )
         self.actor_trace_embedding_size = self.actor_trace_encoder.OUTPUT_SIZE
         self.critic_trace_embedding_size = self.critic_trace_encoder.OUTPUT_SIZE
         self.head_extra_size = 2 * TraceEncoder.OUTPUT_SIZE

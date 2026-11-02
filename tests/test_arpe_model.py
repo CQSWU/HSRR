@@ -94,12 +94,7 @@ def test_network_restores_independent_trace_critic_and_605638_parameters(full_mo
     assert sum(p.numel() for p in model.trace_value_head.parameters()) == 257
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 605_638
     assert model.head_extra_size == 64
-    for key, expected in (
-        ("paper_entropy_gate_version", 0),
-        ("independent_critic_version", 1),
-        ("allaction_residual_version", 2),
-    ):
-        assert model.state_dict()[key].item() == expected
+    assert not list(model.named_buffers(recurse=False))
 
 
 def test_fusion_input_is_trace32_h512_z5_and_detaches_frozen_epom():
@@ -310,7 +305,6 @@ def test_actor_and_critic_have_independent_parameters(full_model):
         id(p) for p in critic_parameters
     )
     assert all(p.requires_grad for p in actor_parameters + critic_parameters)
-    assert int(model.allaction_residual_version) == 2
 
 
 def test_packed_rollout_keeps_both_trace_features_and_backpropagates(full_model):

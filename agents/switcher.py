@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from copy import deepcopy
 from pathlib import Path
 from typing import Literal, Mapping
 
@@ -20,9 +18,7 @@ from agents.controller import (
     SWITCHER_FIELD_SHAPES,
     switcher_observation_space,
 )
-from agents.arpe import ARPEWeights
 from agents.common import AlgoBase, resolve_device
-from learning.config import checkpoint_experiment_config
 from train_arpe import register_custom_components, validate_config
 
 
@@ -36,21 +32,26 @@ class Switcher:
         self.cfg = cfg
         path = Path(cfg.path_to_weights)
         register_custom_components()
-        config = json.loads((path / "config.json").read_text(encoding="utf-8"))
-        full_config = deepcopy(config["full_config"])
-        declaration = full_config.pop("candidate_policy", None)
-        if declaration is not None and not isinstance(declaration, dict):
-            raise RuntimeError("Switcher candidate_policy declaration is malformed.")
-        self.candidate_artifact = (
-            ARPEWeights.from_mapping(declaration, Path(__file__).resolve().parents[1])
-            if declaration is not None else None
+        # The published policy has a fixed feed-forward 128D architecture.
+        # Inference does not depend on saved training records or training recipes.
+        _, flat_config = validate_config(
+            {
+                "name": "Switcher-Inference",
+                "experiment_settings": {
+                    "encoder_custom": "switcher",
+                    "hidden_size": 128,
+                    "nonlinearity": "relu",
+                    "actor_critic_share_weights": True,
+                    "decoder_mlp_layers": [],
+                    "normalize_input": False,
+                    "obs_subtract_mean": 0.0,
+                    "obs_scale": 1.0,
+                    "switcher_initial_ao_probability": 0.1,
+                },
+                "async_ppo": {"use_rnn": False, "recurrence": 1},
+            }
         )
-
-        _, flat_config = validate_config(checkpoint_experiment_config(full_config))
-        if flat_config.encoder_custom != "switcher":
-            raise RuntimeError("Checkpoint is not a Switcher policy.")
-        if bool(flat_config.use_rnn):
-            raise RuntimeError("Switcher checkpoint must be feed-forward.")
+        flat_config.normalize_returns = True
 
         observation_space = gym.spaces.Dict(
             {
@@ -65,9 +66,7 @@ class Switcher:
         self.device = resolve_device(str(cfg.device).lower())
         actor.model_to_device(self.device)
 
-        self.checkpoint_path = self._resolve_checkpoint(
-            path / f"checkpoint_p{flat_config.policy_index}"
-        )
+        self.checkpoint_path = self._resolve_checkpoint(path / "checkpoint_p0")
         checkpoint = torch.load(
             self.checkpoint_path,
             map_location=self.device,

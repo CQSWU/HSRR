@@ -149,7 +149,7 @@ def test_final_weight_loading_and_small_cpu_forward_when_available():
     switcher_dir = ROOT / "weights/HSRR-Switcher-Final-1B"
     if (
         not artifact.checkpoint_path.is_file()
-        or not (switcher_dir / "config.json").is_file()
+        or not any((switcher_dir / "checkpoint_p0").glob("*.pth"))
     ):
         pytest.skip("Final model weights are distributed separately")
     from agents.hsrr import HSRR, HSRRConfig
@@ -168,7 +168,6 @@ def test_final_weight_loading_and_small_cpu_forward_when_available():
         candidate=artifact,
     )
     model = policy.candidate.ppo
-    assert int(model.paper_entropy_gate_version) == 0
     assert isinstance(model.inference_correction, InferenceCorrection)
     before = {key: value.clone() for key, value in model.state_dict().items()}
     config_before = deepcopy(model.cfg.full_config)
