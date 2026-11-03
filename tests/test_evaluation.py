@@ -43,7 +43,7 @@ def test_public_cli_defaults_to_aoreplan_only():
     assert args.algorithms == ["AORePlan"]
     assert runner.parse_agent_counts(args) == list(range(50, 501, 50))
     assert runner.parse_seeds(args) == [0]
-    assert args.map_list is None
+    assert args.map_list == "maps/test.yaml"
     assert args.map_file is None
     assert runner.parse_algorithms("all") == ["AORePlan"]
     assert runner.parse_algorithms("AORePlan,ARPE,HSRR") == [
@@ -225,6 +225,40 @@ def test_custom_map_keeps_its_border(tmp_path):
     }
 
 
+def test_default_run_uses_all_test_maps_and_grid_contents(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    names, grids = runner.load_map_list_snapshot(root / "maps/test.yaml")
+    tasks = []
+    monkeypatch.setattr(sys, "argv", ["evaluate.py", "--main-dir", str(root)])
+    monkeypatch.setattr(runner, "run_experiments", lambda rows, _workers: (tasks.extend(rows) or [], 0.0))
+    monkeypatch.setattr(runner, "save_results", lambda *_args: None)
+    runner.main()
+    assert len(names) == 36
+    assert len(tasks) == 360
+    assert {(task["map_name"], task["num_agents"], task["seed"]) for task in tasks} == {
+        (name, agents, 0) for name in names for agents in range(50, 501, 50)
+    }
+    assert all(task["map_text"] == grids[task["map_name"]] for task in tasks)
+    assert all(task["algorithm"] == "AORePlan" for task in tasks)
+
+
+@pytest.mark.parametrize("option", ["--map-file", "--map-list"])
+def test_explicit_map_overrides_default_collection(monkeypatch, tmp_path, option):
+    grid = "...\n.#.\n..."
+    source = tmp_path / ("tiny.map" if option == "--map-file" else "tiny.yaml")
+    source.write_text(grid if option == "--map-file" else json.dumps({"tiny": grid}), encoding="utf-8")
+    tasks = []
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate.py", "--main-dir", str(tmp_path), option, source.name, "--agents", "2",
+    ])
+    monkeypatch.setattr(runner, "run_experiments", lambda rows, _workers: (tasks.extend(rows) or [], 0.0))
+    monkeypatch.setattr(runner, "save_results", lambda *_args: None)
+    runner.main()
+    assert len(tasks) == 1
+    assert tasks[0]["map_name"] == ("tiny.map" if option == "--map-file" else "tiny")
+    assert tasks[0]["map_text"] == grid
+
+
 def test_saved_metadata_keeps_protocol_without_weight_or_host_reports(monkeypatch):
     captured = {}
     monkeypatch.setattr(
@@ -256,8 +290,9 @@ def test_saved_metadata_keeps_protocol_without_weight_or_host_reports(monkeypatc
     assert captured["seeds"] == [42]
     assert captured["max_steps"] == 16
     assert captured["collision_system"] == "soft"
-    assert captured["maps"] == runner.DEFAULT_MAPS
-    assert len(captured["maps"]) == 5
+    names, _ = runner.load_map_list_snapshot(Path(__file__).resolve().parents[1] / "maps/test.yaml")
+    assert captured["maps"] == names
+    assert len(captured["maps"]) == 36
     assert not (
         {"runtime_provenance", "switcher_weights_path", "main_dir", "map_list_sha256"}
         & captured.keys()

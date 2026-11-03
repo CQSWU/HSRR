@@ -26,6 +26,8 @@ uv sync
 uv run python evaluate.py --algorithms AORePlan
 ```
 
+Evaluation uses all 36 maps in `maps/test.yaml` by default.
+
 Download the [model weights](https://github.com/CQSWU/HSRR/releases/tag/weights-v1)
 and extract them into `weights/`. ARPE needs `EPOM-L` and `ARPE-Final-1B`;
 HSRR also needs `HSRR-Switcher-Final-1B`. Experiment data is not included.

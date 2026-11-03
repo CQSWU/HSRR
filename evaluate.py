@@ -21,14 +21,6 @@ from pogema.svg_animation.animation_wrapper import (
 from pomapf_env.env import make_pomapf
 from pomapf_env.config import POMAPFConfig
 
-DEFAULT_MAPS = {
-    "mazes": "mazes-s0_wc8_od55",
-    "random": "random-s0_d0.15",
-    "sc1": "sc1-AcrosstheCape",
-    "street": "street-Berlin_0",
-    "wc3": "wc3-Battleground",
-}
-
 SUPPORTED_ALGORITHMS = ("AORePlan", "ARPE", "HSRR")
 DEFAULT_ALGORITHMS = ("AORePlan",)
 ALGORITHM_ALIASES = {name.lower(): name for name in SUPPORTED_ALGORITHMS}
@@ -499,7 +491,7 @@ def parse_args():
     parser.add_argument("--main-dir", default="./")
     maps = parser.add_mutually_exclusive_group()
     maps.add_argument("--map-file", help="Custom text or MovingAI map")
-    maps.add_argument("--map-list", help="YAML map collection, e.g. maps/test.yaml")
+    maps.add_argument("--map-list", default="maps/test.yaml", help="YAML map collection (default: maps/test.yaml)")
     parser.add_argument("--on-target", choices=("restart", "finish", "nothing"), default="restart")
     parser.add_argument("--collision-system", choices=("soft", "block_both", "priority"), default="block_both")
     parser.add_argument("--arpe-candidate-manifest", default=None)
@@ -522,10 +514,8 @@ def main():
     if args.map_file:
         custom_map = load_map_text(_project_path(args.main_dir, args.map_file))
         maps = {"custom": custom_map["map_name"]}
-    elif args.map_list:
-        maps, map_texts = load_map_list_snapshot(_project_path(args.main_dir, args.map_list))
     else:
-        maps = dict(DEFAULT_MAPS)
+        maps, map_texts = load_map_list_snapshot(_project_path(args.main_dir, args.map_list))
     tasks = build_tasks(args.algorithms, maps, counts, seeds, args, custom_map, map_texts)
     metadata = dict(
         algorithms=args.algorithms, agent_counts=counts, seeds=seeds, maps=maps,
